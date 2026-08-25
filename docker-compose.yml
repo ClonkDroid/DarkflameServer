@@ -23,7 +23,7 @@ services:
   darkflameserver:
     networks:
       - darkflame
-    image: ghcr.io/darkflameuniverse/darkflameserver:latest
+    image: ${DLU_SERVER_IMAGE:-ghcr.io/clonkdroid/darkflameserver:mod-framework}
     volumes:
       - ${HOST_CONFIG_DIR:-./server/config}:/app/configs/
       - ${CLIENT_PATH:-./client}:/app/luclient:ro
