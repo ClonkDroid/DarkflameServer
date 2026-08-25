@@ -2,6 +2,7 @@
 
 #include "RakNetTypes.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -26,7 +27,11 @@ public:
 
 private:
 	struct ModRuntime;
-	struct CommandBinding;
+	struct CommandBinding {
+		ModRuntime* runtime = nullptr;
+		int functionRef = -2;
+		int32_t gmLevel = 0;
+	};
 
 	ModManager() = default;
 	~ModManager() = default;
