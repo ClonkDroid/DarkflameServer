@@ -30,7 +30,10 @@ services:
       - ${HOST_RESSERVER_LOCATION:-./server/res}:/app/resServer/
       - ${HOST_DUMP_FOLDER:-./server/dump}:/app/dump/
       - ${HOST_LOGS_DIR:-./server/logs}:/app/logs/
-      - ${HOST_MODS_DIR:-./mods}:/app/mods:ro
+      # Dashboard-managed mods are writable on the host and reloadable at runtime.
+      - ${HOST_USER_MODS_DIR:-./user-mods}:/app/mods
+      # Keep the bundled DebugWorld present and read-only even though /app/mods is mounted.
+      - ${HOST_BUILTIN_MODS_DIR:-./mods}/DebugWorld.dlumod:/app/mods/DebugWorld.dlumod:ro
     environment:
       - CLIENT_LOCATION=/app/luclient
       - DLU_CONFIG_DIR=/app/configs
@@ -58,18 +61,25 @@ services:
   darkflameweb:
     networks:
       - darkflame
-    image: ghcr.io/darkflameuniverse/nexusdashboard:latest
+    image: ${DLU_DASHBOARD_IMAGE:-ghcr.io/clonkdroid/nexusdashboard:mod-browser}
     volumes:
       - ${CLIENT_PATH:-./client}:/app/luclient:ro
       - ${HOST_CACHE_LOCATION:-./web/cache}:/app/cache
       - ${HOST_RESSERVER_LOCATION:-./server/res}:/app/cdclient:ro
       - ${HOST_ND_LOGS_LOCATION:-./web/logs}:/logs
+      # Same writable user-mod directory used by WorldServer.
+      - ${HOST_USER_MODS_DIR:-./user-mods}:/app/mods
+      # Reference copy for the UI; bundled mods are shown but never removable.
+      - ${HOST_BUILTIN_MODS_DIR:-./mods}:/app/builtin-mods:ro
     environment:
       - APP_SECRET_KEY=${ACCOUNT_MANAGER_SECRET:?error}
       - APP_DATABASE_URI=mysql+pymysql://${MARIADB_USER:-darkflame}:${MARIADB_PASSWORD:?error}@darkflamedb:3306/${MARIADB_DATABASE:-darkflame}
       - CLIENT_LOCATION=/app/luclient/
       - CACHE_LOCATION=/app/cache/
       - CD_SQLITE_LOCATION=/app/cdclient/
+      - MODS_LOCATION=/app/mods
+      - BUILTIN_MODS_LOCATION=/app/builtin-mods
+      - MOD_UPLOAD_MAX_BYTES=${MOD_UPLOAD_MAX_BYTES:-1048576}
       - USER_ENABLE_REGISTER=1 # "0" is _not_ false, to disable, remove this line
     depends_on:
       - darkflamedb
