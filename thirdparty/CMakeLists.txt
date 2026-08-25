@@ -93,6 +93,9 @@ list(REMOVE_ITEM LUA_SOURCES "${lua_SOURCE_DIR}/src/lua.c" "${lua_SOURCE_DIR}/sr
 add_library(lua STATIC ${LUA_SOURCES})
 target_include_directories(lua PUBLIC "${lua_SOURCE_DIR}/src")
 set_target_properties(lua PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(UNIX)
+	target_link_libraries(lua PUBLIC m)
+endif()
 
 add_subdirectory(MD5)
 
