@@ -30,9 +30,11 @@ services:
       - ${HOST_RESSERVER_LOCATION:-./server/res}:/app/resServer/
       - ${HOST_DUMP_FOLDER:-./server/dump}:/app/dump/
       - ${HOST_LOGS_DIR:-./server/logs}:/app/logs/
+      - ${HOST_MODS_DIR:-./mods}:/app/mods:ro
     environment:
       - CLIENT_LOCATION=/app/luclient
       - DLU_CONFIG_DIR=/app/configs
+      - DLU_MODS_DIR=/app/mods
       - DUMP_FOLDER=/app/dump
       - DATABASE_TYPE=mariadb
       - SQLITE_DATABASE_PATH=${SQLITE_DATABASE_PATH:-resServer/dlu.sqlite}
