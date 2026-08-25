@@ -1,5 +1,24 @@
+# The Lua mod API can own interactive QueueChoiceBox callbacks. Keep the
+# upstream Entity.cpp source untouched while the mod framework is developed and
+# inject a single guarded interception before the normal script callback.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/Entity.cpp" ENTITY_SOURCE)
+string(REPLACE
+	"#include \"PlayerManager.h\""
+	"#include \"PlayerManager.h\"\n#include \"ModManager.h\""
+	ENTITY_SOURCE
+	"${ENTITY_SOURCE}"
+)
+string(REPLACE
+	"void Entity::OnChoiceBoxResponse(Entity* sender, int32_t button, const std::u16string& buttonIdentifier, const std::u16string& identifier) {\n\tGetScript()->OnChoiceBoxResponse(this, sender, button, buttonIdentifier, identifier);\n}"
+	"void Entity::OnChoiceBoxResponse(Entity* sender, int32_t button, const std::u16string& buttonIdentifier, const std::u16string& identifier) {\n\tif (ModManager::Instance().HandleChoiceBoxResponse(this, sender, button, buttonIdentifier, identifier)) return;\n\tGetScript()->OnChoiceBoxResponse(this, sender, button, buttonIdentifier, identifier);\n}"
+	ENTITY_SOURCE
+	"${ENTITY_SOURCE}"
+)
+set(MODDED_ENTITY_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/EntityWithMods.cpp")
+file(WRITE "${MODDED_ENTITY_SOURCE}" "${ENTITY_SOURCE}")
+
 set(DGAME_SOURCES "Character.cpp"
-		"Entity.cpp"
+		"${MODDED_ENTITY_SOURCE}"
 		"EntityManager.cpp"
 		"LeaderboardManager.cpp"
 		"PlayerManager.cpp"
