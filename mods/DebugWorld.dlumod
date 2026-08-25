@@ -1,0 +1,143 @@
+dlu.mod {
+    id = "debug-world",
+    name = "Debug World",
+    version = "0.1.0",
+    api = 1
+}
+
+local DEBUG_ZONE = 1100
+local DEBUG_CLONE = 9001
+
+local function words(text)
+    local result = {}
+    for word in string.gmatch(text or "", "%S+") do
+        table.insert(result, word)
+    end
+    return result
+end
+
+local function integer(value)
+    if value == nil then return nil end
+    local number = tonumber(value)
+    if number == nil or number % 1 ~= 0 then return nil end
+    return math.tointeger(number)
+end
+
+local function help()
+    dlu.feedback(table.concat({
+        "Debug World commands:",
+        "/debugworld - enter the debug clone of Avant Gardens",
+        "/debug level <n> - set your level",
+        "/debug give <lot> [count] - give an existing item",
+        "/debug spawn <lot> [count] [radius] - spawn existing entities",
+        "/debug coins <amount> - set coins",
+        "/debug heal - refill health/armor/imagination",
+        "/debug lookup <name> - search existing client objects",
+        "/debug pos - print current position",
+        "/debug world - enter the debug world"
+    }, "\n"))
+end
+
+dlu.command {
+    name = "debugworld",
+    aliases = { "dw" },
+    help = "Enter the Debug World",
+    info = "Transfers you to a reserved debug clone of Avant Gardens using only existing client assets.",
+    gm_level = 8,
+    run = function()
+        dlu.feedback("Entering Debug World (zone 1100, clone 9001)...")
+        dlu.test_map(DEBUG_ZONE, DEBUG_CLONE)
+    end
+}
+
+dlu.command {
+    name = "debug",
+    aliases = { "dbg" },
+    help = "Debug World toolbox",
+    info = "Server-side debugging toolbox provided by DebugWorld.dlumod.",
+    gm_level = 8,
+    run = function(args)
+        local argv = words(args)
+        local sub = argv[1]
+
+        if sub == nil or sub == "help" then
+            help()
+            return
+        end
+
+        if sub == "world" then
+            dlu.test_map(DEBUG_ZONE, DEBUG_CLONE)
+            return
+        end
+
+        if sub == "level" then
+            local level = integer(argv[2])
+            if level == nil or level < 1 then
+                dlu.feedback("Usage: /debug level <positive integer>")
+                return
+            end
+            dlu.set_level(level)
+            return
+        end
+
+        if sub == "give" then
+            local lot = integer(argv[2])
+            local count = integer(argv[3]) or 1
+            if lot == nil or count < 1 then
+                dlu.feedback("Usage: /debug give <lot> [count]")
+                return
+            end
+            dlu.give_item(lot, count)
+            return
+        end
+
+        if sub == "spawn" then
+            local lot = integer(argv[2])
+            local count = integer(argv[3]) or 1
+            local radius = tonumber(argv[4]) or 10
+            if lot == nil or count < 1 or radius < 0 then
+                dlu.feedback("Usage: /debug spawn <lot> [count] [radius]")
+                return
+            end
+            if count == 1 then
+                dlu.spawn(lot)
+            else
+                dlu.spawn_group(lot, count, radius)
+            end
+            return
+        end
+
+        if sub == "coins" then
+            local amount = integer(argv[2])
+            if amount == nil or amount < 0 then
+                dlu.feedback("Usage: /debug coins <non-negative integer>")
+                return
+            end
+            dlu.set_coins(amount)
+            return
+        end
+
+        if sub == "heal" then
+            dlu.refill()
+            return
+        end
+
+        if sub == "lookup" then
+            local query = string.match(args or "", "^%S+%s+(.+)$")
+            if query == nil or query == "" then
+                dlu.feedback("Usage: /debug lookup <object name>")
+                return
+            end
+            dlu.lookup(query)
+            return
+        end
+
+        if sub == "pos" then
+            dlu.position()
+            return
+        end
+
+        dlu.feedback("Unknown debug subcommand: " .. tostring(sub))
+        help()
+    end
+}

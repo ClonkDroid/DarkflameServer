@@ -41,6 +41,7 @@ COPY --from=build /tmp/persisted-build/*.ini /app/configs/
 COPY --from=build /tmp/persisted-build/vanity/*.* /app/vanity/
 COPY --from=build /tmp/persisted-build/navmeshes /app/navmeshes
 COPY --from=build /tmp/persisted-build/migrations /app/migrations
+COPY --from=build /tmp/persisted-build/mods /app/mods
 COPY --from=build /tmp/persisted-build/*.dcf /app/
 
 # backup of config and vanity files to copy to the host incase 
@@ -52,6 +53,7 @@ COPY --from=build /tmp/persisted-build/vanity/*.* /app/default-vanity/
 # and therefore sudo doesn't exist
 ENV USE_SUDO_AUTH=0
 ENV DLU_CONFIG_DIR=/app/configs/
+ENV DLU_MODS_DIR=/app/mods/
 
 COPY --chmod=0500 ./entrypoint.sh /app/
 ENTRYPOINT [ "/app/entrypoint.sh" ]

@@ -4,11 +4,13 @@ on:
   push:
     branches:
       - main
+      - feature/lua-mod-framework
     tags:
       - "v*.*.*"
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -49,6 +51,8 @@ jobs:
             type=ref,event=pr
             type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
             type=raw,value=canary,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+            type=raw,value=mod-framework,enable=${{ github.ref == 'refs/heads/feature/lua-mod-framework' }}
+            type=sha,prefix=mod-framework-,enable=${{ github.ref == 'refs/heads/feature/lua-mod-framework' }}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
