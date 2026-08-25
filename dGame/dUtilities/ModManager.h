@@ -78,10 +78,12 @@ private:
 	static int ApiZones(lua_State* state);
 	static int ApiItems(lua_State* state);
 	static int ApiCurrencyItems(lua_State* state);
+	static int ApiMissions(lua_State* state);
 	static int ApiMaxLevel(lua_State* state);
 	static int ApiPlayerInfo(lua_State* state);
 	static int ApiSetUScore(lua_State* state);
 	static int ApiGiveUScore(lua_State* state);
+	static int ApiSetReputation(lua_State* state);
 	static int ApiCompleteMission(lua_State* state);
 	static int ApiCompleteAllMissions(lua_State* state);
 	static int ApiResetMission(lua_State* state);
