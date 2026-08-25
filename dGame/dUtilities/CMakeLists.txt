@@ -3,6 +3,7 @@ set(DGAME_DUTILITIES_SOURCES "BrickDatabase.cpp"
 	"GUID.cpp"
 	"Loot.cpp"
 	"Mail.cpp"
+	"ModManager.cpp"
 	"ObjectIDManager.cpp"
 	"Preconditions.cpp"
 	"SlashCommandHandler.cpp"
@@ -27,5 +28,5 @@ target_include_directories(dUtilities PUBLIC "." "SlashCommands"
 	"${PROJECT_SOURCE_DIR}/dZoneManager" # Mail.cpp
 )
 target_link_libraries(dUtilities
-	PUBLIC dDatabase dPhysics
+	PUBLIC dDatabase dPhysics lua
 	INTERFACE dZoneManager)
