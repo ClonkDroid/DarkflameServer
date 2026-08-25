@@ -16,7 +16,6 @@ public:
 
 	void Startup();
 	void Shutdown();
-	void ReloadAll();
 
 	[[nodiscard]] size_t GetLoadedModCount() const;
 	[[nodiscard]] std::string GetLoadedModsSummary() const;
@@ -30,9 +29,7 @@ private:
 	ModManager& operator=(const ModManager&) = delete;
 
 	bool LoadMod(const std::filesystem::path& path);
-	void UnloadMods();
 	void RegisterManagementCommands();
-	void UnregisterManagementCommands();
 	void InvokeCommand(ModRuntime* runtime, int functionRef, Entity* entity, const SystemAddress& sysAddr, const std::string& args);
 
 	static ModRuntime* GetRuntime(lua_State* state);
@@ -53,5 +50,4 @@ private:
 	const SystemAddress* m_CurrentSysAddr = nullptr;
 	std::filesystem::path m_ModsDirectory;
 	std::vector<std::unique_ptr<ModRuntime>> m_Mods;
-	bool m_ManagementCommandsRegistered = false;
 };
