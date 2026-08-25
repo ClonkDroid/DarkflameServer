@@ -26,7 +26,10 @@ set(MODDED_WORLD_SERVER_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/WorldServerWithMods.
 file(WRITE "${MODDED_WORLD_SERVER_SOURCE}" "${WORLD_SERVER_SOURCE}")
 
 add_executable(WorldServer "${MODDED_WORLD_SERVER_SOURCE}")
-target_include_directories(WorldServer PRIVATE "${PROJECT_SOURCE_DIR}/dChatFilter")
+target_include_directories(WorldServer PRIVATE
+	"${CMAKE_CURRENT_SOURCE_DIR}" # generated WorldServerWithMods.cpp must retain source-local includes
+	"${PROJECT_SOURCE_DIR}/dChatFilter"
+)
 add_compile_definitions(WorldServer PRIVATE PROJECT_VERSION="\"${PROJECT_VERSION}\"")
 
 target_include_directories(WorldServer PRIVATE
