@@ -71,7 +71,10 @@ add_library(dGame STATIC
 	$<TARGET_OBJECTS:dPropertyBehaviors>
 	$<TARGET_OBJECTS:dUtilities>
 )
-target_link_libraries(dGame INTERFACE dNet)
+# dGame contains the dUtilities object files, including the Lua-backed mod
+# manager. Static libraries do not link their object-library dependencies into
+# themselves, so every consumer of dGame must also receive the Lua archive.
+target_link_libraries(dGame INTERFACE dNet lua)
 target_include_directories(dGame INTERFACE
 	$<TARGET_PROPERTY:dGameBase,INTERFACE_INCLUDE_DIRECTORIES>
 	$<TARGET_PROPERTY:dBehaviors,INTERFACE_INCLUDE_DIRECTORIES>
