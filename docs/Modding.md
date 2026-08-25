@@ -1,14 +1,26 @@
 # DLU drop-in mods
 
-This fork adds an experimental server-side Lua mod API. Version 1 is intentionally small: it proves that gameplay extensions can be dropped into a running Darkflame deployment without recompiling the server for each mod.
+This fork adds an experimental server-side Lua mod API. Version 1 is intentionally small: it proves that gameplay extensions can be dropped into a Darkflame deployment without recompiling the server for each mod.
 
-## Installing a mod
+## Installing and reloading a mod
 
 Place a file ending in `.dlumod` in the WorldServer mod directory. By default this is `mods/` beside the server binaries. Set `DLU_MODS_DIR` to override it.
 
 Docker Compose mounts `${HOST_MODS_DIR:-./mods}` at `/app/mods` read-only.
 
-Version 1 loads mods when each non-zero WorldServer starts. Hot reload is deliberately not enabled yet because the existing slash-command registry does not provide atomic command removal.
+Each non-zero WorldServer loads mods at startup. Developers may then reload the complete mod set without restarting the WorldServer:
+
+```text
+/modreload
+```
+
+Alias: `/reloadmods`.
+
+Reload is transactional. Darkflame first loads every candidate `.dlumod` into fresh isolated Lua states and validates manifests, API versions, duplicate mod IDs, and duplicate mod command aliases. Only when the entire candidate set succeeds is it activated. If any file fails, the currently running mod set remains active and unchanged.
+
+Mod slash commands use stable dispatcher callbacks. Dispatchers never retain a raw pointer to a Lua runtime; they resolve the active runtime/function binding when the command executes. This means replacing or removing a mod cannot leave a slash command callback pointing at a freed Lua state.
+
+A command alias that has existed previously may leave a harmless dispatcher registered after the providing mod is removed. Calling such an alias reports that the command is inactive. This is a deliberate interim tradeoff until the upstream command registry has first-class dynamic command removal/metadata refresh.
 
 ## File format
 
@@ -38,7 +50,14 @@ dlu.command {
 }
 ```
 
-All command definitions are collected while the Lua file is evaluated and are only published after the entire file and manifest validate successfully. A syntax/runtime error during startup therefore does not leave callbacks pointing at a destroyed Lua state.
+All command definitions are collected while the Lua file is evaluated and only become active after the entire candidate mod set validates successfully.
+
+## Management commands
+
+- `/mods` or `/modlist` - list currently active mods
+- `/modreload` or `/reloadmods` - transactionally reload every `.dlumod` from the configured mod directory
+
+Both management commands require Developer GM level.
 
 ## API version 1
 
@@ -91,14 +110,12 @@ It adds:
 
 The debug instance reuses an existing LEGO Universe zone and existing client assets; it introduces no new textures, models, map files, or UI resources.
 
-## Planned API v2 work
+## Next API work
 
-The next useful pieces are:
-
-1. Atomic command ownership/unregistration and safe hot reload.
-2. Event hooks (`player_login`, `player_smashed`, `entity_spawned`, mission/item events, etc.).
-3. Stable `PlayerHandle`, `EntityHandle`, and `World` objects instead of command wrappers.
-4. Timers/schedulers.
-5. Per-mod persistent storage and configuration.
+1. Event hooks (`player_login`, `player_smashed`, `entity_spawned`, mission/item events, etc.).
+2. Stable `PlayerHandle`, `EntityHandle`, and `World` objects instead of command wrappers.
+3. Timers/schedulers.
+4. Per-mod persistent storage and configuration.
+5. First-class dynamic command removal/metadata refresh in the core command registry.
 6. Dependencies/capabilities and bundle-style `.dlumod` archives.
 7. NexusDashboard mod management.
