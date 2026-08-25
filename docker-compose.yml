@@ -30,8 +30,8 @@ services:
       - ${HOST_RESSERVER_LOCATION:-./server/res}:/app/resServer/
       - ${HOST_DUMP_FOLDER:-./server/dump}:/app/dump/
       - ${HOST_LOGS_DIR:-./server/logs}:/app/logs/
-      # All server mods are managed through NexusDashboard.
-      - ${HOST_MODS_DIR:-./mods}:/app/mods
+      # Empty by default; every installed mod is managed through NexusDashboard.
+      - ${HOST_MODS_DIR:-./managed-mods}:/app/mods
     environment:
       - CLIENT_LOCATION=/app/luclient
       - DLU_CONFIG_DIR=/app/configs
@@ -65,7 +65,7 @@ services:
       - ${HOST_CACHE_LOCATION:-./web/cache}:/app/cache
       - ${HOST_RESSERVER_LOCATION:-./server/res}:/app/cdclient:ro
       - ${HOST_ND_LOGS_LOCATION:-./web/logs}:/logs
-      - ${HOST_MODS_DIR:-./mods}:/app/mods
+      - ${HOST_MODS_DIR:-./managed-mods}:/app/mods
     environment:
       - APP_SECRET_KEY=${ACCOUNT_MANAGER_SECRET:?error}
       - APP_DATABASE_URI=mysql+pymysql://${MARIADB_USER:-darkflame}:${MARIADB_PASSWORD:?error}@darkflamedb:3306/${MARIADB_DATABASE:-darkflame}
