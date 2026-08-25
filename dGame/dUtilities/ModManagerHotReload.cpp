@@ -102,6 +102,7 @@ void ModManager::Startup() {
 }
 
 void ModManager::Shutdown() {
+	ClearChoiceBindings();
 	m_CommandBindings.clear();
 	m_Mods.clear();
 }
@@ -178,6 +179,7 @@ std::unique_ptr<ModManager::ModRuntime> ModManager::LoadModCandidate(const std::
 		{ "set_coins", ApiSetCoins }, { "lookup", ApiLookup }, { "position", ApiPosition }, { nullptr, nullptr }
 	};
 	luaL_setfuncs(runtime->state, apiFunctions, 0);
+	RegisterExtendedApi(runtime->state);
 	lua_setglobal(runtime->state, "dlu");
 
 	if (luaL_loadfile(runtime->state, path.string().c_str()) != LUA_OK) {
@@ -217,6 +219,9 @@ void ModManager::ActivateCandidates(std::vector<std::unique_ptr<ModRuntime>> can
 		}
 	}
 
+	// Choice callbacks contain Lua registry references and must be released
+	// before the old Lua states are destroyed by the runtime swap.
+	ClearChoiceBindings();
 	m_CommandBindings.clear();
 	m_Mods = std::move(candidates);
 	for (const auto& runtime : m_Mods) {
