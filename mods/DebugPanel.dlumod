@@ -1,0 +1,507 @@
+dlu.mod {
+    id = "debug-panel",
+    name = "Debug Panel",
+    version = "0.1.0",
+    api = 1
+}
+
+local GM = 8
+local PAGE = 9
+
+local show_main
+local show_zones
+local show_item_categories
+local show_items
+local show_item_quantity
+local show_character
+local show_levels
+local show_currencies
+local show_currency_items
+local show_missions
+local show_cheats
+local show_diagnostics
+
+local function opt(id, caption, tooltip, image)
+    local value = {
+        id = id,
+        caption = caption,
+        tooltip = tooltip or ""
+    }
+    if image and image ~= "" then value.image = image end
+    return value
+end
+
+local function panel(title, options, handler)
+    dlu.choice_box {
+        title = title,
+        gm_level = GM,
+        options = options,
+        on_select = function(id, button)
+            if button < 0 or not id or id == "" then return end
+            handler(id)
+        end
+    }
+end
+
+local function page_bounds(page, count)
+    page = math.max(1, page or 1)
+    local pages = math.max(1, math.ceil(count / PAGE))
+    if page > pages then page = pages end
+    return page, pages, (page - 1) * PAGE + 1, math.min(page * PAGE, count)
+end
+
+local function parse_number_id(prefix, id)
+    if string.sub(id, 1, #prefix) ~= prefix then return nil end
+    return tonumber(string.sub(id, #prefix + 1))
+end
+
+local item_types = {
+    {1, "Bricks"}, {2, "Hats"}, {3, "Hair"}, {4, "Neck"},
+    {5, "Left Hand"}, {6, "Right Hand"}, {7, "Legs"},
+    {8, "Left Trinkets"}, {9, "Right Trinkets"}, {10, "Behaviors"},
+    {11, "Property Items"}, {12, "Models"}, {13, "Collectibles"},
+    {14, "Consumables"}, {15, "Chests"}, {16, "Eggs"},
+    {17, "Pet Food"}, {18, "Quest Objects"}, {19, "Pet Inventory"},
+    {20, "Packages"}, {21, "Loot Models"}, {22, "Vehicles"},
+    {23, "LUP Models"}, {24, "Mounts"}
+}
+
+local mission_state = {
+    [-1] = "Unknown", [0] = "Rewarding", [1] = "Available", [2] = "Active",
+    [4] = "Ready", [8] = "Complete", [9] = "Complete / Available",
+    [10] = "Complete / Active", [12] = "Complete / Ready", [16] = "Failed"
+}
+
+show_main = function()
+    local info = dlu.player_info()
+    local title = string.format(
+        "Debug Panel | Lv %d | Zone %d | GM %d",
+        info.level or 0, info.zone or 0, info.gm_level or 0
+    )
+    panel(title, {
+        opt("zones", "Travel / Zones", "Browse and teleport to every ZoneTable entry."),
+        opt("items", "Items", "Browse every item by category with client icon previews."),
+        opt("character", "Character", "Level, stats, inventory and persistence tools."),
+        opt("currencies", "Currencies", "Coins, U-Score, reputation and every item currency."),
+        opt("missions", "Missions", "Browse, complete or reset missions; includes complete-all."),
+        opt("cheats", "Cheats / Utilities", "Fly, freecam, immunity and other live debug toggles."),
+        opt("diagnostics", "Diagnostics", "Current character and world runtime information.")
+    }, function(id)
+        if id == "zones" then show_zones(1)
+        elseif id == "items" then show_item_categories(1)
+        elseif id == "character" then show_character()
+        elseif id == "currencies" then show_currencies()
+        elseif id == "missions" then show_missions(1)
+        elseif id == "cheats" then show_cheats()
+        elseif id == "diagnostics" then show_diagnostics()
+        end
+    end)
+end
+
+show_zones = function(page)
+    local zones = dlu.zones()
+    page, pages, first, last = page_bounds(page, #zones)
+    local options = {}
+    for i = first, last do
+        local z = zones[i]
+        local name = z.name ~= "" and z.name or ("Zone " .. z.id)
+        options[#options + 1] = opt(
+            "zone:" .. z.id,
+            string.format("%s [%d]", name, z.id),
+            z.description ~= "" and z.description or ("Teleport to zone " .. z.id),
+            z.thumbnail
+        )
+    end
+    if page > 1 then options[#options + 1] = opt("prev", "< Previous", "Previous zone page") end
+    if page < pages then options[#options + 1] = opt("next", "Next >", "Next zone page") end
+    options[#options + 1] = opt("back", "< Main Menu", "Return to Debug Panel")
+
+    panel(string.format("Travel / Zones | %d/%d", page, pages), options, function(id)
+        if id == "back" then show_main()
+        elseif id == "prev" then show_zones(page - 1)
+        elseif id == "next" then show_zones(page + 1)
+        else
+            local zone = parse_number_id("zone:", id)
+            if zone then dlu.test_map(zone, 0) end
+        end
+    end)
+end
+
+show_item_categories = function(page)
+    page, pages, first, last = page_bounds(page, #item_types)
+    local options = { opt("all", "All Items", "Browse all objects that have an ItemComponent.") }
+    for i = first, last do
+        local entry = item_types[i]
+        options[#options + 1] = opt("type:" .. entry[1], entry[2], "ItemComponent type " .. entry[1])
+    end
+    if page > 1 then options[#options + 1] = opt("prev", "< Previous", "Previous category page") end
+    if page < pages then options[#options + 1] = opt("next", "Next >", "Next category page") end
+    options[#options + 1] = opt("back", "< Main Menu", "Return to Debug Panel")
+
+    panel(string.format("Items / Categories | %d/%d", page, pages), options, function(id)
+        if id == "back" then show_main()
+        elseif id == "prev" then show_item_categories(page - 1)
+        elseif id == "next" then show_item_categories(page + 1)
+        elseif id == "all" then show_items(-1, "All Items", 1)
+        else
+            local item_type = parse_number_id("type:", id)
+            if item_type then
+                local name = "Items"
+                for _, entry in ipairs(item_types) do if entry[1] == item_type then name = entry[2] break end end
+                show_items(item_type, name, 1)
+            end
+        end
+    end)
+end
+
+show_items = function(item_type, category_name, page)
+    local offset = (page - 1) * PAGE
+    local items = dlu.items(item_type, offset, PAGE, "")
+    local options = {}
+    for _, item in ipairs(items) do
+        local caption = item.name ~= "" and item.name or item.internal_name
+        if caption == "" then caption = "LOT " .. item.lot end
+        options[#options + 1] = opt(
+            "item:" .. item.lot,
+            string.format("%s [%d]", caption, item.lot),
+            string.format("LOT %d | rarity %d | item type %d", item.lot, item.rarity or 0, item.item_type or -1),
+            item.image
+        )
+    end
+    if page > 1 then options[#options + 1] = opt("prev", "< Previous", "Previous item page") end
+    if #items == PAGE then options[#options + 1] = opt("next", "Next >", "Next item page") end
+    options[#options + 1] = opt("back", "< Categories", "Return to item categories")
+
+    panel(string.format("%s | Page %d", category_name, page), options, function(id)
+        if id == "back" then show_item_categories(1)
+        elseif id == "prev" then show_items(item_type, category_name, page - 1)
+        elseif id == "next" then show_items(item_type, category_name, page + 1)
+        else
+            local lot = parse_number_id("item:", id)
+            if lot then
+                for _, item in ipairs(items) do
+                    if item.lot == lot then show_item_quantity(item, item_type, category_name, page) return end
+                end
+            end
+        end
+    end)
+end
+
+show_item_quantity = function(item, item_type, category_name, return_page)
+    local label = item.name ~= "" and item.name or ("LOT " .. item.lot)
+    panel(label .. " | Give quantity", {
+        opt("q:1", "Give 1", "Add one item", item.image),
+        opt("q:5", "Give 5", "Add five items", item.image),
+        opt("q:10", "Give 10", "Add ten items", item.image),
+        opt("q:50", "Give 50", "Add fifty items", item.image),
+        opt("q:99", "Give 99", "Add 99 items", item.image),
+        opt("q:250", "Give 250", "Add 250 items", item.image),
+        opt("back", "< Item List", "Return without giving")
+    }, function(id)
+        if id == "back" then show_items(item_type, category_name, return_page) return end
+        local quantity = parse_number_id("q:", id)
+        if quantity then
+            dlu.give_item(item.lot, quantity)
+            dlu.feedback(string.format("Gave %d x %s [%d]", quantity, label, item.lot))
+            show_items(item_type, category_name, return_page)
+        end
+    end)
+end
+
+show_levels = function(page)
+    local maximum = dlu.max_level()
+    local levels = {}
+    for i = 1, maximum do levels[#levels + 1] = i end
+    page, pages, first, last = page_bounds(page, #levels)
+    local options = {}
+    for i = first, last do
+        local level = levels[i]
+        options[#options + 1] = opt("level:" .. level, "Level " .. level, "Set exact character level")
+    end
+    if page > 1 then options[#options + 1] = opt("prev", "< Previous", "Previous level page") end
+    if page < pages then options[#options + 1] = opt("next", "Next >", "Next level page") end
+    options[#options + 1] = opt("max", "Set Maximum Level", "Set level " .. maximum)
+    options[#options + 1] = opt("back", "< Character", "Return to character tools")
+    panel(string.format("Character / Level | %d/%d", page, pages), options, function(id)
+        if id == "back" then show_character()
+        elseif id == "prev" then show_levels(page - 1)
+        elseif id == "next" then show_levels(page + 1)
+        elseif id == "max" then dlu.set_level(maximum); show_character()
+        else
+            local level = parse_number_id("level:", id)
+            if level then dlu.set_level(level); show_character() end
+        end
+    end)
+end
+
+show_character = function()
+    local info = dlu.player_info()
+    local summary = string.format(
+        "Character | Lv %d | H %d/%d | A %d/%d | I %d/%d",
+        info.level or 0, info.health or 0, info.max_health or 0,
+        info.armor or 0, info.max_armor or 0,
+        info.imagination or 0, info.max_imagination or 0
+    )
+    panel(summary, {
+        opt("level", "Set Level", "Choose any level supported by LevelProgressionLookup."),
+        opt("maxlevel", "Maximum Level", "Immediately set the maximum available level."),
+        opt("refill", "Refill Stats", "Refill health, armor and imagination."),
+        opt("inventory", "Inventory Size 240", "Set the main item inventory to 240 slots."),
+        opt("save", "Force Save", "Persist the current character immediately."),
+        opt("back", "< Main Menu", "Return to Debug Panel")
+    }, function(id)
+        if id == "back" then show_main()
+        elseif id == "level" then show_levels(1)
+        elseif id == "maxlevel" then dlu.set_level(dlu.max_level()); show_character()
+        elseif id == "refill" then dlu.refill(); show_character()
+        elseif id == "inventory" then dlu.set_inventory_size(240, "items"); show_character()
+        elseif id == "save" then dlu.force_save(); dlu.feedback("Character saved."); show_character()
+        end
+    end)
+end
+
+local function show_coin_presets()
+    panel("Currencies / Coins", {
+        opt("v:100000", "100,000 coins"),
+        opt("v:1000000", "1,000,000 coins"),
+        opt("v:10000000", "10,000,000 coins"),
+        opt("v:999999999", "999,999,999 coins"),
+        opt("back", "< Currencies")
+    }, function(id)
+        if id == "back" then show_currencies() return end
+        local value = parse_number_id("v:", id)
+        if value then dlu.set_coins(value); show_currencies() end
+    end)
+end
+
+local function show_uscore_presets()
+    panel("Currencies / U-Score", {
+        opt("v:1000", "1,000 U-Score"), opt("v:10000", "10,000 U-Score"),
+        opt("v:100000", "100,000 U-Score"), opt("v:1000000", "1,000,000 U-Score"),
+        opt("back", "< Currencies")
+    }, function(id)
+        if id == "back" then show_currencies() return end
+        local value = parse_number_id("v:", id)
+        if value then dlu.set_uscore(value); show_currencies() end
+    end)
+end
+
+local function show_reputation_presets()
+    panel("Currencies / Reputation", {
+        opt("v:1000", "1,000 reputation"), opt("v:10000", "10,000 reputation"),
+        opt("v:100000", "100,000 reputation"), opt("v:1000000", "1,000,000 reputation"),
+        opt("back", "< Currencies")
+    }, function(id)
+        if id == "back" then show_currencies() return end
+        local value = parse_number_id("v:", id)
+        if value then dlu.set_reputation(value); show_currencies() end
+    end)
+end
+
+show_currency_items = function(page)
+    local currencies = dlu.currency_items()
+    page, pages, first, last = page_bounds(page, #currencies)
+    local options = {}
+    for i = first, last do
+        local c = currencies[i]
+        options[#options + 1] = opt("cur:" .. c.lot, string.format("%s [%d]", c.name, c.lot), "Give 1,000 of this currency item.", c.image)
+    end
+    if page > 1 then options[#options + 1] = opt("prev", "< Previous") end
+    if page < pages then options[#options + 1] = opt("next", "Next >") end
+    options[#options + 1] = opt("back", "< Currencies")
+    panel(string.format("Item Currencies | %d/%d", page, pages), options, function(id)
+        if id == "back" then show_currencies()
+        elseif id == "prev" then show_currency_items(page - 1)
+        elseif id == "next" then show_currency_items(page + 1)
+        else
+            local lot = parse_number_id("cur:", id)
+            if lot then dlu.give_item(lot, 1000); show_currency_items(page) end
+        end
+    end)
+end
+
+local function confirm_all_currency_items()
+    panel("CONFIRM: Grant every item currency", {
+        opt("yes", "YES - give 9,999 of each", "This can add many stacks to your inventories."),
+        opt("cancel", "Cancel", "Make no changes")
+    }, function(id)
+        if id == "yes" then
+            local currencies = dlu.currency_items()
+            local count = 0
+            for _, currency in ipairs(currencies) do
+                dlu.give_item(currency.lot, 9999)
+                count = count + 1
+            end
+            dlu.feedback("Granted 9,999 of " .. count .. " currency-item LOTs.")
+        end
+        show_currencies()
+    end)
+end
+
+show_currencies = function()
+    local info = dlu.player_info()
+    panel(string.format("Currencies | Coins %d | U %d | Rep %d", info.coins or 0, info.uscore or 0, info.reputation or 0), {
+        opt("coins", "Coins", "Set common coin amounts."),
+        opt("uscore", "U-Score", "Set Universe Score."),
+        opt("rep", "Reputation", "Set lifetime reputation."),
+        opt("items", "Item Currencies", "Browse every LOT referenced as currency/commendation currency."),
+        opt("allitems", "Grant ALL Item Currencies", "Give 9,999 of every discovered currency-item LOT."),
+        opt("back", "< Main Menu")
+    }, function(id)
+        if id == "back" then show_main()
+        elseif id == "coins" then show_coin_presets()
+        elseif id == "uscore" then show_uscore_presets()
+        elseif id == "rep" then show_reputation_presets()
+        elseif id == "items" then show_currency_items(1)
+        elseif id == "allitems" then confirm_all_currency_items()
+        end
+    end)
+end
+
+local function confirm_complete_all()
+    panel("CONFIRM: Complete every mission", {
+        opt("yes", "YES - complete all missions", "Skips normal task/prerequisite checks. This is intentionally destructive progression tooling."),
+        opt("cancel", "Cancel", "Make no changes")
+    }, function(id)
+        if id == "yes" then
+            local count = dlu.complete_all_missions()
+            dlu.feedback("Completed " .. count .. " previously unfinished missions.")
+            dlu.force_save()
+        end
+        show_missions(1)
+    end)
+end
+
+local function confirm_reset_all()
+    panel("CONFIRM: Reset loaded missions", {
+        opt("yes", "YES - reset current mission inventory", "Resets/removes currently loaded mission progress."),
+        opt("cancel", "Cancel")
+    }, function(id)
+        if id == "yes" then
+            local count = dlu.reset_all_missions()
+            dlu.feedback("Reset " .. count .. " loaded missions.")
+        end
+        show_missions(1)
+    end)
+end
+
+show_missions = function(page)
+    local offset = (page - 1) * PAGE
+    local missions = dlu.missions(offset, PAGE, true)
+    local options = {
+        opt("completeall", "COMPLETE ALL MISSIONS", "Force-complete every mission in the client database."),
+        opt("resetall", "Reset Current Missions", "Reset all missions currently loaded on the character.")
+    }
+    for _, mission in ipairs(missions) do
+        local typename = mission.type ~= "" and mission.type or "Mission"
+        local state = mission_state[mission.state] or tostring(mission.state)
+        options[#options + 1] = opt(
+            "mission:" .. mission.id,
+            string.format("%s [%d]", typename, mission.id),
+            string.format("%s | %s | state: %s", mission.type or "", mission.subtype or "", state)
+        )
+    end
+    if page > 1 then options[#options + 1] = opt("prev", "< Previous") end
+    if #missions == PAGE then options[#options + 1] = opt("next", "Next >") end
+    options[#options + 1] = opt("back", "< Main Menu")
+
+    panel("Missions | Page " .. page, options, function(id)
+        if id == "back" then show_main()
+        elseif id == "prev" then show_missions(page - 1)
+        elseif id == "next" then show_missions(page + 1)
+        elseif id == "completeall" then confirm_complete_all()
+        elseif id == "resetall" then confirm_reset_all()
+        else
+            local mission = parse_number_id("mission:", id)
+            if mission then
+                panel("Mission " .. mission, {
+                    opt("complete", "Force Complete", "Accept if needed, then complete while skipping task checks."),
+                    opt("reset", "Reset", "Reset this mission."),
+                    opt("back", "< Mission List")
+                }, function(action)
+                    if action == "complete" then dlu.complete_mission(mission)
+                    elseif action == "reset" then dlu.reset_mission(mission)
+                    end
+                    show_missions(page)
+                end)
+            end
+        end
+    end)
+end
+
+show_cheats = function()
+    panel("Cheats / Utilities", {
+        opt("fly1", "Toggle Fly (1x)", "Toggle flight at normal speed."),
+        opt("fly2", "Toggle Fly (2x)", "Toggle flight at 2x speed."),
+        opt("fly4", "Toggle Fly (4x)", "Toggle flight at 4x speed."),
+        opt("freecam", "Toggle Freecam", "Switch between normal controls and free camera."),
+        opt("gmon", "GM Immunity ON", "Enable full GM damage immunity."),
+        opt("gmoff", "GM Immunity OFF", "Disable full GM damage immunity."),
+        opt("attackon", "Basic Attack Immunity ON", "Ignore basic attack damage."),
+        opt("attackoff", "Basic Attack Immunity OFF", "Restore basic attack damage."),
+        opt("refill", "Refill Stats", "Refill health, armor and imagination."),
+        opt("back", "< Main Menu")
+    }, function(id)
+        if id == "back" then show_main(); return end
+        if id == "fly1" then dlu.fly(1)
+        elseif id == "fly2" then dlu.fly(2)
+        elseif id == "fly4" then dlu.fly(4)
+        elseif id == "freecam" then dlu.freecam()
+        elseif id == "gmon" then dlu.gm_immune(true)
+        elseif id == "gmoff" then dlu.gm_immune(false)
+        elseif id == "attackon" then dlu.attack_immune(true)
+        elseif id == "attackoff" then dlu.attack_immune(false)
+        elseif id == "refill" then dlu.refill()
+        end
+        show_cheats()
+    end)
+end
+
+show_diagnostics = function()
+    local i = dlu.player_info()
+    local title = string.format("Diagnostics | Zone %d | GM %d", i.zone or 0, i.gm_level or 0)
+    local stats = string.format("Lv %d | H %d/%d A %d/%d I %d/%d", i.level or 0,
+        i.health or 0, i.max_health or 0, i.armor or 0, i.max_armor or 0,
+        i.imagination or 0, i.max_imagination or 0)
+    local pos = string.format("Position %.2f, %.2f, %.2f", i.x or 0, i.y or 0, i.z or 0)
+    local money = string.format("Coins %d | U-Score %d | Rep %d", i.coins or 0, i.uscore or 0, i.reputation or 0)
+    panel(title, {
+        opt("stats", stats, "Live destroyable/level values."),
+        opt("pos", pos, "Current world position."),
+        opt("money", money, "Current progression currencies."),
+        opt("printpos", "Print Position to Chat", "Run the existing /pos diagnostic."),
+        opt("save", "Force Save", "Persist the character now."),
+        opt("back", "< Main Menu")
+    }, function(id)
+        if id == "back" then show_main()
+        elseif id == "printpos" then dlu.position(); show_diagnostics()
+        elseif id == "save" then dlu.force_save(); show_diagnostics()
+        else show_diagnostics() end
+    end)
+end
+
+dlu.command {
+    name = "debugpanel",
+    aliases = { "dp", "adminpanel" },
+    gm_level = GM,
+    help = "Open the graphical DLU debugging panel",
+    info = "Opens graphical travel, item, character, currency, mission, cheat and diagnostics tools.",
+    run = function(args)
+        -- Fast-paths remain handy when a known ID is already available.
+        local command, a, b = string.match(args or "", "^(%S*)%s*(%S*)%s*(%S*)")
+        if command == "item" and tonumber(a) then
+            dlu.give_item(tonumber(a), tonumber(b) or 1)
+            return
+        elseif command == "zone" and tonumber(a) then
+            dlu.test_map(tonumber(a), tonumber(b) or 0)
+            return
+        elseif command == "level" and tonumber(a) then
+            dlu.set_level(tonumber(a))
+            return
+        elseif command == "mission" and tonumber(a) then
+            dlu.complete_mission(tonumber(a))
+            return
+        end
+        show_main()
+    end
+}
