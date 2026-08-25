@@ -26,9 +26,7 @@ namespace {
 
 	std::string GetRequiredString(lua_State* state, int tableIndex, const char* field) {
 		lua_getfield(state, tableIndex, field);
-		if (!lua_isstring(state, -1)) {
-			luaL_error(state, "field '%s' must be a string", field);
-		}
+		if (!lua_isstring(state, -1)) luaL_error(state, "field '%s' must be a string", field);
 		std::string value = lua_tostring(state, -1);
 		lua_pop(state, 1);
 		return value;
@@ -57,8 +55,11 @@ namespace {
 }
 
 struct ModManager::ModRuntime {
-	struct RegisteredCommand {
-		std::string primaryAlias;
+	struct PendingCommand {
+		std::string help;
+		std::string info;
+		std::vector<std::string> aliases;
+		int32_t gmLevel = static_cast<int32_t>(eGameMasterLevel::DEVELOPER);
 		int functionRef = LUA_NOREF;
 	};
 
@@ -69,7 +70,7 @@ struct ModManager::ModRuntime {
 	std::string version;
 	int32_t apiVersion = 0;
 	bool manifestDeclared = false;
-	std::vector<RegisteredCommand> commands;
+	std::vector<PendingCommand> commands;
 
 	~ModRuntime() {
 		if (state) lua_close(state);
@@ -95,19 +96,8 @@ void ModManager::Startup() {
 	}
 
 	RegisterManagementCommands();
-	ReloadAll();
-}
-
-void ModManager::Shutdown() {
-	UnloadMods();
-	UnregisterManagementCommands();
-}
-
-void ModManager::ReloadAll() {
-	UnloadMods();
 
 	std::vector<std::filesystem::path> candidates;
-	std::error_code error;
 	for (const auto& entry : std::filesystem::directory_iterator(m_ModsDirectory, error)) {
 		if (error) break;
 		if (!entry.is_regular_file()) continue;
@@ -116,10 +106,13 @@ void ModManager::ReloadAll() {
 
 	std::ranges::sort(candidates);
 	LOG("[Mods] Found %zu drop-in mod file(s) in %s", candidates.size(), m_ModsDirectory.string().c_str());
-
 	for (const auto& candidate : candidates) LoadMod(candidate);
-
 	LOG("[Mods] Loaded %zu mod(s)", m_Mods.size());
+}
+
+void ModManager::Shutdown() {
+	// V1 mods are startup-only. Command callbacks remain registered until the
+	// WorldServer process exits, so keep their Lua states alive for that lifetime.
 }
 
 size_t ModManager::GetLoadedModCount() const {
@@ -131,9 +124,7 @@ std::string ModManager::GetLoadedModsSummary() const {
 
 	std::ostringstream summary;
 	summary << "Loaded mods (" << m_Mods.size() << "):";
-	for (const auto& mod : m_Mods) {
-		summary << "\n- " << mod->name << " " << mod->version << " [" << mod->id << "]";
-	}
+	for (const auto& mod : m_Mods) summary << "\n- " << mod->name << " " << mod->version << " [" << mod->id << "]";
 	return summary.str();
 }
 
@@ -148,8 +139,8 @@ bool ModManager::LoadMod(const std::filesystem::path& path) {
 
 	luaL_openlibs(runtime->state);
 
-	// The first API version is intentionally conservative. Mods get the normal Lua
-	// language/runtime libraries, but not direct filesystem/process/module access.
+	// Conservative v1 sandbox: no direct filesystem, process, native module or
+	// debug-library access. This is not yet a hardened hostile-code sandbox.
 	DisableGlobal(runtime->state, "io");
 	DisableGlobal(runtime->state, "os");
 	DisableGlobal(runtime->state, "package");
@@ -164,7 +155,6 @@ bool ModManager::LoadMod(const std::filesystem::path& path) {
 	lua_newtable(runtime->state);
 	lua_pushinteger(runtime->state, MOD_API_VERSION);
 	lua_setfield(runtime->state, -2, "api_version");
-
 	const luaL_Reg apiFunctions[] = {
 		{ "mod", ApiDeclareMod },
 		{ "command", ApiRegisterCommand },
@@ -187,17 +177,28 @@ bool ModManager::LoadMod(const std::filesystem::path& path) {
 		LOG("[Mods] Failed loading %s: %s", path.filename().string().c_str(), lua_tostring(runtime->state, -1));
 		return false;
 	}
-
 	if (lua_pcall(runtime->state, 0, 0, 0) != LUA_OK) {
 		LOG("[Mods] Failed executing %s: %s", path.filename().string().c_str(), lua_tostring(runtime->state, -1));
-		for (const auto& command : runtime->commands) SlashCommandHandler::UnregisterCommand(command.primaryAlias);
+		return false;
+	}
+	if (!runtime->manifestDeclared) {
+		LOG("[Mods] %s did not call dlu.mod{...}; rejecting mod", path.filename().string().c_str());
 		return false;
 	}
 
-	if (!runtime->manifestDeclared) {
-		LOG("[Mods] %s did not call dlu.mod{...}; rejecting mod", path.filename().string().c_str());
-		for (const auto& command : runtime->commands) SlashCommandHandler::UnregisterCommand(command.primaryAlias);
-		return false;
+	// Only publish callbacks after the entire mod file has parsed and executed.
+	// That prevents a half-loaded script from leaving dangling command closures.
+	for (const auto& pending : runtime->commands) {
+		Command command{
+			.help = pending.help,
+			.info = pending.info,
+			.aliases = pending.aliases,
+			.handle = [mod = runtime.get(), functionRef = pending.functionRef](Entity* entity, const SystemAddress& sysAddr, const std::string& args) {
+				ModManager::Instance().InvokeCommand(mod, functionRef, entity, sysAddr, args);
+			},
+			.requiredLevel = static_cast<eGameMasterLevel>(pending.gmLevel)
+		};
+		SlashCommandHandler::RegisterCommand(std::move(command));
 	}
 
 	LOG("[Mods] Loaded %s %s (%s) with %zu command(s)", runtime->name.c_str(), runtime->version.c_str(), runtime->id.c_str(), runtime->commands.size());
@@ -205,47 +206,17 @@ bool ModManager::LoadMod(const std::filesystem::path& path) {
 	return true;
 }
 
-void ModManager::UnloadMods() {
-	for (auto& mod : m_Mods) {
-		for (const auto& command : mod->commands) SlashCommandHandler::UnregisterCommand(command.primaryAlias);
-	}
-	m_Mods.clear();
-}
-
 void ModManager::RegisterManagementCommands() {
-	if (m_ManagementCommandsRegistered) return;
-
 	Command listCommand{
 		.help = "List loaded DLU mods",
-		.info = "Shows all currently loaded .dlumod files.",
+		.info = "Shows all currently loaded .dlumod files. V1 mods are loaded at WorldServer startup.",
 		.aliases = { "mods", "modlist" },
 		.handle = [](Entity* entity, const SystemAddress&, const std::string&) {
 			GameMessages::SendSlashCommandFeedbackText(entity, GeneralUtils::UTF8ToUTF16(ModManager::Instance().GetLoadedModsSummary()));
 		},
 		.requiredLevel = eGameMasterLevel::DEVELOPER
 	};
-
-	Command reloadCommand{
-		.help = "Reload all DLU mods",
-		.info = "Unloads and reloads all .dlumod files from the configured mod directory.",
-		.aliases = { "modreload", "reloadmods" },
-		.handle = [](Entity* entity, const SystemAddress&, const std::string&) {
-			ModManager::Instance().ReloadAll();
-			GameMessages::SendSlashCommandFeedbackText(entity, GeneralUtils::UTF8ToUTF16(ModManager::Instance().GetLoadedModsSummary()));
-		},
-		.requiredLevel = eGameMasterLevel::DEVELOPER
-	};
-
-	const bool listRegistered = SlashCommandHandler::RegisterCommand(std::move(listCommand));
-	const bool reloadRegistered = SlashCommandHandler::RegisterCommand(std::move(reloadCommand));
-	m_ManagementCommandsRegistered = listRegistered && reloadRegistered;
-}
-
-void ModManager::UnregisterManagementCommands() {
-	if (!m_ManagementCommandsRegistered) return;
-	SlashCommandHandler::UnregisterCommand("mods");
-	SlashCommandHandler::UnregisterCommand("modreload");
-	m_ManagementCommandsRegistered = false;
+	SlashCommandHandler::RegisterCommand(std::move(listCommand));
 }
 
 void ModManager::InvokeCommand(ModRuntime* runtime, int functionRef, Entity* entity, const SystemAddress& sysAddr, const std::string& args) {
@@ -253,7 +224,6 @@ void ModManager::InvokeCommand(ModRuntime* runtime, int functionRef, Entity* ent
 
 	m_CurrentEntity = entity;
 	m_CurrentSysAddr = &sysAddr;
-
 	lua_rawgeti(runtime->state, LUA_REGISTRYINDEX, functionRef);
 	lua_pushlstring(runtime->state, args.c_str(), args.size());
 
@@ -285,11 +255,8 @@ int ModManager::ApiDeclareMod(lua_State* state) {
 	runtime->name = GetRequiredString(state, 1, "name");
 	runtime->version = GetRequiredString(state, 1, "version");
 	runtime->apiVersion = GetOptionalInteger(state, 1, "api", MOD_API_VERSION);
-
 	if (runtime->id.empty()) return luaL_error(state, "mod id may not be empty");
-	if (runtime->apiVersion != MOD_API_VERSION) {
-		return luaL_error(state, "mod requests API %d but server provides API %d", runtime->apiVersion, MOD_API_VERSION);
-	}
+	if (runtime->apiVersion != MOD_API_VERSION) return luaL_error(state, "mod requests API %d but server provides API %d", runtime->apiVersion, MOD_API_VERSION);
 
 	runtime->manifestDeclared = true;
 	return 0;
@@ -300,12 +267,12 @@ int ModManager::ApiRegisterCommand(lua_State* state) {
 	auto* runtime = GetRuntime(state);
 	if (!runtime || !runtime->manifestDeclared) return luaL_error(state, "call dlu.mod{...} before registering commands");
 
-	const std::string name = GetRequiredString(state, 1, "name");
-	const std::string help = GetOptionalString(state, 1, "help", "Mod command");
-	const std::string info = GetOptionalString(state, 1, "info", help);
-	const int32_t gmLevel = GetOptionalInteger(state, 1, "gm_level", static_cast<int32_t>(eGameMasterLevel::DEVELOPER));
+	ModRuntime::PendingCommand command;
+	command.aliases.push_back(GetRequiredString(state, 1, "name"));
+	command.help = GetOptionalString(state, 1, "help", "Mod command");
+	command.info = GetOptionalString(state, 1, "info", command.help);
+	command.gmLevel = GetOptionalInteger(state, 1, "gm_level", static_cast<int32_t>(eGameMasterLevel::DEVELOPER));
 
-	std::vector<std::string> aliases { name };
 	lua_getfield(state, 1, "aliases");
 	if (lua_istable(state, -1)) {
 		const lua_Integer length = luaL_len(state, -1);
@@ -316,7 +283,7 @@ int ModManager::ApiRegisterCommand(lua_State* state) {
 				return luaL_error(state, "command aliases must be strings");
 			}
 			std::string alias = lua_tostring(state, -1);
-			if (std::ranges::find(aliases, alias) == aliases.end()) aliases.push_back(std::move(alias));
+			if (std::ranges::find(command.aliases, alias) == command.aliases.end()) command.aliases.push_back(std::move(alias));
 			lua_pop(state, 1);
 		}
 	}
@@ -327,42 +294,22 @@ int ModManager::ApiRegisterCommand(lua_State* state) {
 		lua_pop(state, 1);
 		return luaL_error(state, "command field 'run' must be a function");
 	}
-	const int functionRef = luaL_ref(state, LUA_REGISTRYINDEX);
-
-	Command command{
-		.help = help,
-		.info = info,
-		.aliases = aliases,
-		.handle = [runtime, functionRef](Entity* entity, const SystemAddress& sysAddr, const std::string& args) {
-			ModManager::Instance().InvokeCommand(runtime, functionRef, entity, sysAddr, args);
-		},
-		.requiredLevel = static_cast<eGameMasterLevel>(gmLevel)
-	};
-
-	if (!SlashCommandHandler::RegisterCommand(std::move(command))) {
-		luaL_unref(state, LUA_REGISTRYINDEX, functionRef);
-		return luaL_error(state, "command '%s' conflicts with an existing command or alias", name.c_str());
-	}
-
-	runtime->commands.push_back({ name, functionRef });
+	command.functionRef = luaL_ref(state, LUA_REGISTRYINDEX);
+	runtime->commands.push_back(std::move(command));
 	return 0;
 }
 
 int ModManager::ApiFeedback(lua_State* state) {
 	const char* text = luaL_checkstring(state, 1);
 	auto& manager = Instance();
-	if (manager.m_CurrentEntity) {
-		GameMessages::SendSlashCommandFeedbackText(manager.m_CurrentEntity, GeneralUtils::UTF8ToUTF16(text));
-	}
+	if (manager.m_CurrentEntity) GameMessages::SendSlashCommandFeedbackText(manager.m_CurrentEntity, GeneralUtils::UTF8ToUTF16(text));
 	return 0;
 }
 
 int ModManager::ApiSetLevel(lua_State* state) {
 	const auto level = luaL_checkinteger(state, 1);
 	auto& manager = Instance();
-	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) {
-		DEVGMCommands::SetLevel(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, std::to_string(level));
-	}
+	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) DEVGMCommands::SetLevel(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, std::to_string(level));
 	return 0;
 }
 
@@ -370,18 +317,14 @@ int ModManager::ApiGiveItem(lua_State* state) {
 	const auto lot = luaL_checkinteger(state, 1);
 	const auto count = luaL_optinteger(state, 2, 1);
 	auto& manager = Instance();
-	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) {
-		DEVGMCommands::GmAddItem(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, std::to_string(lot) + " " + std::to_string(count));
-	}
+	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) DEVGMCommands::GmAddItem(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, std::to_string(lot) + " " + std::to_string(count));
 	return 0;
 }
 
 int ModManager::ApiSpawn(lua_State* state) {
 	const auto lot = luaL_checkinteger(state, 1);
 	auto& manager = Instance();
-	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) {
-		DEVGMCommands::Spawn(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, std::to_string(lot));
-	}
+	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) DEVGMCommands::Spawn(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, std::to_string(lot));
 	return 0;
 }
 
@@ -402,42 +345,32 @@ int ModManager::ApiTestMap(lua_State* state) {
 	const auto zone = luaL_checkinteger(state, 1);
 	const auto clone = luaL_optinteger(state, 2, 0);
 	auto& manager = Instance();
-	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) {
-		DEVGMCommands::TestMap(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, std::to_string(zone) + " " + std::to_string(clone));
-	}
+	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) DEVGMCommands::TestMap(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, std::to_string(zone) + " " + std::to_string(clone));
 	return 0;
 }
 
 int ModManager::ApiRefill(lua_State*) {
 	auto& manager = Instance();
-	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) {
-		DEVGMCommands::RefillStats(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, "");
-	}
+	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) DEVGMCommands::RefillStats(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, "");
 	return 0;
 }
 
 int ModManager::ApiSetCoins(lua_State* state) {
 	const auto coins = luaL_checkinteger(state, 1);
 	auto& manager = Instance();
-	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) {
-		DEVGMCommands::SetCurrency(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, std::to_string(coins));
-	}
+	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) DEVGMCommands::SetCurrency(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, std::to_string(coins));
 	return 0;
 }
 
 int ModManager::ApiLookup(lua_State* state) {
 	const char* query = luaL_checkstring(state, 1);
 	auto& manager = Instance();
-	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) {
-		DEVGMCommands::Lookup(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, query);
-	}
+	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) DEVGMCommands::Lookup(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, query);
 	return 0;
 }
 
 int ModManager::ApiPosition(lua_State*) {
 	auto& manager = Instance();
-	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) {
-		DEVGMCommands::Pos(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, "");
-	}
+	if (manager.m_CurrentEntity && manager.m_CurrentSysAddr) DEVGMCommands::Pos(manager.m_CurrentEntity, *manager.m_CurrentSysAddr, "");
 	return 0;
 }
