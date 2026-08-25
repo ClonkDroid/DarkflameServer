@@ -62,6 +62,7 @@ private:
 
 	Entity* m_CurrentEntity = nullptr;
 	const SystemAddress* m_CurrentSysAddr = nullptr;
+	std::filesystem::path m_BuiltinModsDirectory;
 	std::filesystem::path m_ModsDirectory;
 	std::vector<std::unique_ptr<ModRuntime>> m_Mods;
 	std::unordered_map<std::string, CommandBinding> m_CommandBindings;
